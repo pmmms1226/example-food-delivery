@@ -1078,7 +1078,7 @@ $ siege -c150 -t60S -v http://game-kakaotalk:8080/kakaoTalks/6
 ```
 
 부하에 따라 game-kakaotalk pod의 CPU 사용율이 증가 했고, Pod Replica 수가 증가 하는것을 확인할 수 있음 
-![image](https://user-images.githubusercontent.com/24929411/93317199-2462a600-f848-11ea-9912-6e35f824dc3b.png)
+![image](https://user-images.githubusercontent.com/24929411/93318585-d64ea200-f849-11ea-8e5c-4455bf92f732.png)
 
 
 
