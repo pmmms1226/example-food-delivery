@@ -658,7 +658,8 @@ configMap으로 부터 변수 가져오는 설정:
 
 
 configMap에 설정된 데이터 확인 (kubectl get cm teamb-config -o yaml)
-![image](https://user-images.githubusercontent.com/24929411/93177339-a03bf000-f76d-11ea-9199-b77ad9867c9d.png)
+![image](https://user-images.githubusercontent.com/24929411/93293680-80ff9a00-f823-11ea-91f3-a720957ac768.png)
+
 
 mypage Application에서 configMap data를 사용하는 부분(mypage의 application.yml)
 ```
