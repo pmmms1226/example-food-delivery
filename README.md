@@ -726,3 +726,461 @@ livenessProbe:
 파일이 없으니 Liveness 체크에 실패를 했고, pod를 재기동 시킵니다.
 ![image](https://user-images.githubusercontent.com/24929411/93284147-ff9d0d00-f80c-11ea-8371-aa8684c661ef.png)
 
+
+# 개인 과제
+
+
+## 시나리오 
+- Mission 달성 시 Reward를 지급 받아 Mission Table이 수정되면 새로운 App.인 KakaoTalk 서비스로 이벤트를 전달한다.
+- 새로운 Application인 KakaoTalk은 전달받은 이벤트를 통해 사용자에게 카카오톡 메시지를 전달해준다.
+![image](https://user-images.githubusercontent.com/24929411/93308103-cbd9db80-f83c-11ea-8ed0-b1ee42caf83c.png)
+
+## 변경된 소스코드
+- Mission 서비스에 MissionUpdated.java 추가
+```
+package game;
+
+public class MissionUpdated  extends AbstractEvent{
+    private Long id;
+    private String status;
+    private Long rewardId;
+    private Long customerId;
+
+    public Long getId() {
+        return id;
+    }
+
+    public void setId(Long id) {
+        this.id = id;
+    }
+
+    public String getStatus() {
+        return status;
+    }
+
+    public void setStatus(String status) {
+        this.status = status;
+    }
+
+    public Long getRewardId() {
+        return rewardId;
+    }
+
+    public void setRewardId(Long rewardId) {
+        this.rewardId = rewardId;
+    }
+
+    public Long getCustomerId() {
+        return customerId;
+    }
+
+    public void setCustomerId(Long customerId) {
+        this.customerId = customerId;
+    }
+}
+```
+- Mission 서비스에 PostUpdate코드 추가(Mission.java) 
+```
+    @PostUpdate
+    public void onPostUpdate(){
+        MissionUpdated missionUpdated = new MissionUpdated();
+//        BeanUtils.copyProperties(this, missionUpdated);
+        missionUpdated.setCustomerId(this.customerId);
+        missionUpdated.setId(this.id);
+        missionUpdated.setRewardId(this.rewardId);
+        missionUpdated.setStatus(this.status);
+        missionUpdated.publishAfterCommit();
+   }
+```
+
+- KakaoTalk 서비스 코드가 추가됨 (대표적으로 PolicyHandler.java)
+```
+package game;
+
+import game.config.kafka.KafkaProcessor;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cloud.stream.annotation.StreamListener;
+import org.springframework.messaging.handler.annotation.Payload;
+import org.springframework.stereotype.Service;
+
+@Service
+public class PolicyHandler{
+    @Autowired
+    KakaoTalkRepository kakaoTalkRepository;
+    @StreamListener(KafkaProcessor.INPUT)
+    public void onStringEventListener(@Payload String eventString){
+
+    }
+
+    @StreamListener(KafkaProcessor.INPUT)
+    public void wheneverMissionUpdated_Alert(@Payload MissionUpdated missionUpdated){
+
+
+        if(missionUpdated.isMe()){
+            KakaoTalk kakaoTalk = new KakaoTalk();
+            kakaoTalk.setMissionId(missionUpdated.getId());
+            kakaoTalk.setStatus(missionUpdated.getStatus());
+
+            kakaoTalkRepository.save(kakaoTalk);
+            ### 카카오톡 메신저를 보내는 로직 ###
+            #                         
+            #
+            System.out.println("##### listener Alert : " + missionUpdated.toJson());
+        }
+    }
+
+}
+
+```
+## EKS 배포 상태
+
+cluster name: admin11-eks, 새로 추가된 kakaotalk 오브젝트들을 확인할 수있음.
+![image](https://user-images.githubusercontent.com/24929411/93309340-5e2eaf00-f83e-11ea-9771-68f96a0a60c7.png)
+
+
+# 평가
+
+## Saga (1)
+시나리오: Mission --> Reward --> Mission Update --> KakaoTalk 
+
+![image](https://user-images.githubusercontent.com/24929411/93310353-a4d0d900-f83f-11ea-9f36-3a6e60ca4d50.png)
+
+
+## CQRS (2)
+   
+Database 조회 업무만을 수행하기 위한 Mypage 개발 
+   
+Mypage.java 
+```
+package game;
+
+import javax.persistence.*;
+import org.springframework.beans.BeanUtils;
+import java.util.List;
+
+@Entity
+@Table(name="Mission_table")
+public class Mission {
+
+   @Id
+   @GeneratedValue(strategy=GenerationType.AUTO)
+   private Long id;
+   private Long customerId;
+   private Long rewardId;
+   private String status;
+
+   @PostPersist
+   public void onPostPersist(){
+       MissionAchieved missionAchieved = new MissionAchieved();
+       BeanUtils.copyProperties(this, missionAchieved);
+       missionAchieved.publishAfterCommit();
+
+
+   }
+```
+MissionId와 RewardId를 통해 데이터베이스를 조회한다. 
+
+MypageRepository.java
+```
+package game;
+
+import org.springframework.data.repository.CrudRepository;
+import org.springframework.data.repository.query.Param;
+
+import java.util.List;
+
+public interface MypageRepository extends CrudRepository<Mypage, Long> {
+
+   List<Mypage> findByMissionId(Long missionId);
+   List<Mypage> findByRewardId(Long rewardId);
+
+}
+```
+Mission, Reward 에서 데이터 변경이 발생하면 mypage에도 적용됨 (mypage MypageViewHandler.java)
+```
+...
+  @StreamListener(KafkaProcessor.INPUT)
+   public void whenAllocated_then_UPDATE_1(@Payload Allocated allocated) {
+       try {
+           if (allocated.isMe()) {
+               // view 객체 조회
+               List<Mypage> mypageList = mypageRepository.findByMissionId(allocated.getMissionId());
+               for(Mypage mypage : mypageList){
+                   // view 객체에 이벤트의 eventDirectValue 를 set 함
+                   mypage.setRewardId(allocated.getId());
+                   // view 레파지 토리에 save
+                   mypageRepository.save(mypage);
+               }
+           }
+       }catch (Exception e){
+           e.printStackTrace();
+       }
+   }
+   @StreamListener(KafkaProcessor.INPUT)
+   public void whenIssued_then_UPDATE_2(@Payload Issued issued) {
+       try {
+           if (issued.isMe()) {
+               // view 객체 조회
+               List<Mypage> mypageList = mypageRepository.findByRewardId(issued.getId());
+               for(Mypage mypage : mypageList){
+                   // view 객체에 이벤트의 eventDirectValue 를 set 함
+                   mypage.setRewardStatus(issued.getStatus());
+                   // view 레파지 토리에 save
+                   mypageRepository.save(mypage);
+               }
+           }
+       }catch (Exception e){
+           e.printStackTrace();
+       }
+   }
+   @StreamListener(KafkaProcessor.INPUT)
+   public void whenExchanged_then_UPDATE_3(@Payload Exchanged exchanged) {
+       try {
+           if (exchanged.isMe()) {
+               // view 객체 조회
+               List<Mypage> mypageList = mypageRepository.findByRewardId(exchanged.getId());
+               for(Mypage mypage : mypageList){
+                   // view 객체에 이벤트의 eventDirectValue 를 set 함
+                   mypage.setRewardStatus(exchanged.getStatus());
+                   // view 레파지 토리에 save
+                   mypageRepository.save(mypage);
+               }
+           }
+       }catch (Exception e){
+           e.printStackTrace();
+       }
+   }
+...
+```
+## Correlation (3) 
+
+
+## 동기식 호출 과 Fallback 처리 (4)
+
+분석단계에서의 조건 중 하나로 wallet -> gift 간의 호출은 동기식 일관성을 유지하는 트랜잭션으로 처리하기로 하였다. 호출 프로토콜은 이미 앞서 Rest Repository 에 의해 노출되어있는 REST 서비스를 FeignClient 를 이용하여 호출하도록 한다. 
+
+- reward 서비스를 호출하기 위하여 Stub과 (FeignClient) 를 이용하여 Service 대행 인터페이스 (Proxy) 를 구현 
+
+```
+# (wallet) giftService.java
+
+package game.external;
+
+import org.springframework.cloud.openfeign.FeignClient;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+
+import java.util.Date;
+
+@FeignClient(name="gift", url="${api.url.gift}", fallback = GiftServiceFallback.class)
+public interface GiftService {
+
+    @RequestMapping(method= RequestMethod.POST, path="/gifts")
+    public void exchange(@RequestBody Gift gift);
+
+}
+```
+
+- update하기 전(@PreUpdate) gift 서비스에 요청하도록 처리 - (로직상에서 PATCH로 동작하기 때문에 PreUpdate를 사용했습니다.)
+```
+# Wallet.java (Entity)
+
+    @PreUpdate
+    public void onPreUpdate(){
+        game.external.Gift gift = new game.external.Gift();
+        gift.setWalletId(this.getId());
+        gift.setStatus("Exchanged.");
+        WalletApplication.applicationContext.getBean(game.external.GiftService.class)
+            .exchange(gift);
+    }
+```
+
+- 동기식 호출에서는 호출 시간에 따른 타임 커플링이 발생하며, gift 시스템이 장애가 나면 위 요청이 실패함:
+
+
+```
+# local test
+# gift 서비스를 잠시 내려놓음 (ctrl+c) 
+
+#Exchanged 처리 (PATCH)
+http localhost:8083/wallets/1 status=Exchanged  #Fail
+
+#gift 서비스 기동
+cd game-gift
+mvn spring-boot:run
+
+#Exchanged 처리 (PATCH)
+http localhost:8083/wallets/1 status=Exchanged    #Success
+```
+
+- 또한 과도한 요청시에 서비스 장애가 도미노 처럼 벌어질 수 있다. (서킷브레이커, 폴백 처리는 운영단계에서 설명한다.)
+
+## Gateway (5)
+* Gateway 프레임워크 선택: Istio
+
+설치된 Istio 확인 
+![image](https://user-images.githubusercontent.com/24929411/93311888-81a72900-f841-11ea-8ab4-ff76edd3033a.png)
+
+기존 Istio Virtual Service에 KakaoTalk Path 추가
+![image](https://user-images.githubusercontent.com/24929411/93312225-ecf0fb00-f841-11ea-9955-f8d1c02dcd84.png)
+
+
+## CI/CD 설정 (6)
+
+
+각 구현체들은 각자의 source repository 에 구성되었고, 사용한 CI/CD 플랫폼은 AWS CodeBuild를 사용하였으며, pipeline build script 는 각 프로젝트 폴더 이하에 buildspec.yml 에 포함되었다.
+
+AWS Console Code Build 화면 (여러 Component들 중 일부만 캡처 했습니다.)
+![image](https://user-images.githubusercontent.com/24929411/93312539-4b1dde00-f842-11ea-83a9-4f4fb7f64ff8.png)
+
+
+
+
+## 서킷 브레이킹 (7)
+
+* 서킷 브레이킹 프레임워크의 선택: Istio
+
+시나리오는 wallet-->gift 시의 연결을 RESTful Request/Response 로 연동하여 구현이 되어있고, 결제 요청이 과도할 경우 CB 를 통하여 장애격리.
+
+- Istio DestinationRule 설정: Queue에서 Connection pool 에 연결을 기다리는 request수가 1이 넘어가면 CB 회로가 닫히도록 (요청을 빠르게 실패처리, 차단) 설정
+![image](https://user-images.githubusercontent.com/24929411/93157393-16782c80-f745-11ea-8c75-b92c8e9315a3.png)
+
+* 부하테스터 siege 툴을 통한 서킷 브레이커 동작 확인:
+
+(gift 서비스에 GET 요청을 하여 테스트)
+
+동시 사용자 1, 3초 동안 --> 모두 성공
+![image](https://user-images.githubusercontent.com/24929411/93169459-19cce180-f760-11ea-9f6e-65b23b9cd5b9.png)
+
+동시 사용자 2, 3초동안 --> 일부 실패 (동시 요청 수가 1이 넘어가면서 CB가 작동되었음을 알 수 있음)
+![image](https://user-images.githubusercontent.com/24929411/93169647-77f9c480-f760-11ea-95fd-f24b51751649.png)
+
+
+
+
+- 운영시스템은 죽지 않고 지속적으로 CB 에 의하여 적절히 회로가 열림과 닫힘이 벌어지면서 자원을 보호하고 있음을 보여줌. 하지만 사용성에 있어 좋지 않기 때문에 Retry 설정과 동적 Scale out (replica의 자동적 추가,HPA) 을 통하여 시스템을 확장 해주는 후속처리가 필요.
+
+## 오토스케일 아웃 (8)
+앞서 CB 는 시스템을 안정되게 운영할 수 있게 해줬지만 사용자의 요청을 100% 받아들여주지 못했기 때문에 이에 대한 보완책으로 자동화된 확장 기능을 적용하고자 한다. 
+
+
+- KakaoTalk 서비스에 대한 replica 를 동적으로 늘려주도록 HPA 를 설정한다. 설정은 CPU 사용량이 20프로를 넘어서면 replica 를 10개까지 늘려준다
+HPA 설정 확인
+![image](https://user-images.githubusercontent.com/24929411/93316776-98507e80-f847-11ea-8097-9937da6c2c14.png)
+
+
+Siege를 통해 game-kakaotalk Pod에 부하
+```
+$ siege -c150 -t60S -v http://game-kakaotalk:8080/kakaoTalks/6
+```
+
+부하에 따라 game-kakaotalk pod의 CPU 사용율이 증가 했고, Pod Replica 수가 증가 하는것을 확인할 수 있음 
+![image](https://user-images.githubusercontent.com/24929411/93317199-2462a600-f848-11ea-9912-6e35f824dc3b.png)
+
+
+
+
+## 무정지 재배포, Readiness probe 설정 (9)
+
+각각 component에 readiness probe 설정 확인 (game-kakaotalk pod의 yaml)
+![image](https://user-images.githubusercontent.com/24929411/93317401-64298d80-f848-11ea-9296-bf992cc1948c.png)
+
+
+무정지 재배포 테스트 시나리오
+- siege 로 배포작업 직전에 워크로드를 100초동안 모니터링함. 
+```
+$ siege -c2 -t100S -v http://game-kakaotalk:8080/kakaoTalks/1
+```
+- 모니터링 도중에 game-kakaotalk image 버전을 update 
+```
+kubectl set image deployment/game-kakaotalk game-kakaotalk=271153858532.dkr.ecr.ap-northeast-2.amazonaws.com/admin11-game-kakaotalk:f9231b22ed9426a743caa30f64bf6973e171993e
+```
+- siege의 결과값이 100% 성공이면 무정지 재배포됨을 확인
+![image](https://user-images.githubusercontent.com/24929411/93181352-5524db80-f773-11ea-9e50-f9bff8acac2a.png)
+
+
+## ConfigMap/Persistence Volume (10)
+
+### ConfigMap
+
+Java application.yml 환경변수 적용을 위해 ConfigMap 설정
+
+Kakaotalk Pod (kubectl get deployment game-kakaotalk -o yaml)
+
+configMap으로 부터 변수 가져오는 설정:
+![image](https://user-images.githubusercontent.com/24929411/93317618-ab178300-f848-11ea-9ba4-fe44a6253ce7.png)
+
+
+configMap에 설정된 데이터 확인 (kubectl get cm teamb-config -o yaml)
+![image](https://user-images.githubusercontent.com/24929411/93317757-cda99c00-f848-11ea-8de4-fc6d8b386679.png)
+
+
+kakaotalk Application에서 configMap data를 사용하는 부분(kakaotalk의 application.yml)
+```
+...
+  datasource:
+    url: jdbc:mariadb://${DB_URL}/${DB_NAME}
+    driver-class-name: org.mariadb.jdbc.Driver
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+...
+```
+
+
+### Persistence Volume
+데이터를 영구적으로 보관하기 위해 efs 사용.
+
+PVC 확인
+![image](https://user-images.githubusercontent.com/24929411/93317883-f16ce200-f848-11ea-89eb-e467e0f326a7.png)
+
+
+game-kakaotalk Deployment에서 해당 pvc를 volumeMount 하여 사용 (kubectl get deployment game-kakaotalk -o yaml)
+![image](https://user-images.githubusercontent.com/24929411/93317944-08abcf80-f849-11ea-9e64-905c1be0a104.png)
+
+
+
+## Polyglot (11)
+
+각 서비스에 맞는 여러가지 데이터베이스 사용 (H2, Mariadb)
+
+mariadb 사용하는 game-kakaotalk의 application.yml 설정
+```
+...
+  datasource:
+    url: jdbc:mariadb://${DB_URL}/${DB_NAME}
+    driver-class-name: org.mariadb.jdbc.Driver
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+...
+```
+
+## Liveness Probe (12)
+
+- Liveness Probe를 통해 특정 경로밑에 파일이 존재하는지 확인 하면서 컨테이너가 동작 중인지 여부를 판단한다. 
+
+Liveness 설정 (테스트를 위해 Persistent Volume 에 미리 healthy 파일을 생성해 놨습니다.)
+![image](https://user-images.githubusercontent.com/24929411/93283043-af24b000-f80a-11ea-9867-790b7bababe2.png)
+
+정상적으로 pod실행 (kubectl describe pod game-mypage-xxx-xxx)
+![image](https://user-images.githubusercontent.com/24929411/93283808-3c1c3900-f80c-11ea-9624-1e89a9b28807.png)
+
+Liveness 설정 변경 (/mnt/aws/healthy --> /tmp/healthy 로 변경)
+```
+livenessProbe:
+  exec:
+    command:
+    - cat
+    - /mnt/aws/healthy --> /tmp/healthy 로 변경 
+  failureThreshold: 5
+  initialDelaySeconds: 150
+  periodSeconds: 5
+  successThreshold: 1
+  timeoutSeconds: 2
+```
+
+파일이 없으니 Liveness 체크에 실패를 했고, pod를 재기동 시킵니다.
+![image](https://user-images.githubusercontent.com/24929411/93284147-ff9d0d00-f80c-11ea-8371-aa8684c661ef.png)
+
