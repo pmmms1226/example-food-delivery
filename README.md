@@ -735,7 +735,7 @@ livenessProbe:
 - 새로운 Application인 KakaoTalk은 전달받은 이벤트를 통해 사용자에게 카카오톡 메시지를 전달해준다.
 - 카카오톡 메신저 전송이 완료되면 다시 Mission시스템이 이벤트를 통해 알려준다
 - gitf를 사용하면 카카오톡 메신저에 Request/Response 로 보내준다
-![image](https://user-images.githubusercontent.com/24929411/93411448-2b37fa00-f8d6-11ea-80d2-0e0e82a38a34.png)
+![image](https://user-images.githubusercontent.com/24929411/93419251-57a84200-f8e7-11ea-8462-7755a93ae6ac.png)
 
 ## 변경된 소스코드
 - Mission 서비스에 MissionUpdated.java 추가
