@@ -738,7 +738,7 @@ livenessProbe:
 ![image](https://user-images.githubusercontent.com/24929411/93419251-57a84200-f8e7-11ea-8462-7755a93ae6ac.png)
 
 ## 변경된 소스코드
-- Mission 서비스에 MissionUpdated.java 추가
+- Mission 서비스에 MissionUpdated.java, MessageUpdated.java 추가
 ```
 package game;
 
@@ -780,6 +780,30 @@ public class MissionUpdated  extends AbstractEvent{
         this.customerId = customerId;
     }
 }
+
+
+package game;
+
+public class MessageUpdated extends AbstractEvent{
+    private Long id;
+    private Long missionId;
+
+    public Long getId() {
+        return id;
+    }
+
+    public void setId(Long id) {
+        this.id = id;
+    }
+    public Long getMissionId() {
+        return missionId;
+    }
+
+    public void setMissionId(Long missionId) {
+        this.missionId = missionId;
+    }
+}
+
 ```
 - Mission 서비스에 PostUpdate코드 추가(Mission.java) 
 ```
@@ -868,10 +892,8 @@ public interface KakaoTalkService {
 }
 
 ```
-- Mypage 에서 kakaoTalk 관련 코드 추가 
-```
+- Mypage 에서 kakaoTalk 관련 코드 추가 (아래 CQRS에서 설명)
 
-```
 
 ## EKS 배포 상태
 
