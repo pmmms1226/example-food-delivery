@@ -733,7 +733,9 @@ livenessProbe:
 ## 시나리오 
 - Mission 달성 시 Reward를 지급 받아 Mission Table이 수정되면 새로운 App.인 KakaoTalk 서비스로 이벤트를 전달한다.
 - 새로운 Application인 KakaoTalk은 전달받은 이벤트를 통해 사용자에게 카카오톡 메시지를 전달해준다.
-![image](https://user-images.githubusercontent.com/24929411/93308103-cbd9db80-f83c-11ea-8ed0-b1ee42caf83c.png)
+- 카카오톡 메신저 전송이 완료되면 다시 Mission시스템이 이벤트를 통해 알려준다
+- gitf를 사용하면 카카오톡 메신저에 Request/Response 로 보내준다
+![image](https://user-images.githubusercontent.com/24929411/93411448-2b37fa00-f8d6-11ea-80d2-0e0e82a38a34.png)
 
 ## 변경된 소스코드
 - Mission 서비스에 MissionUpdated.java 추가
@@ -792,6 +794,21 @@ public class MissionUpdated  extends AbstractEvent{
         missionUpdated.publishAfterCommit();
    }
 ```
+- Mission PolicyHandler.java 코드 추가
+```
+    @StreamListener(KafkaProcessor.INPUT)
+    public void wheneverMessageUpdated_SendMessage(@Payload MessageUpdated messageUpdated){
+
+
+        // 카카오톡 메시지 보냄 확인 로직
+        //
+        //
+        //
+        if(messageUpdated.isMe()){
+            System.out.println("##### listener SendMessage : " + messageUpdated.toJson());
+        }
+    }
+```
 
 - KakaoTalk 서비스 코드가 추가됨 (대표적으로 PolicyHandler.java)
 ```
@@ -834,6 +851,28 @@ public class PolicyHandler{
 }
 
 ```
+- Gift 에서 kakaoTalk 서비스로 Request/Response 로직 추가 (KakaoTalkService.java)
+```
+package game.external;
+
+
+import org.springframework.cloud.openfeign.FeignClient;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+
+@FeignClient(name="kakaoTalk", url="${api.url.kakaotalk}", fallback=KakaoTalkServiceFallback.class)
+public interface KakaoTalkService {
+    @RequestMapping(method= RequestMethod.GET, path="/kakaoTalks")
+    public void use(@RequestBody KakaoTalk kakaoTalk);
+}
+
+```
+- Mypage 에서 kakaoTalk 관련 코드 추가 
+```
+
+```
+
 ## EKS 배포 상태
 
 cluster name: admin11-eks, 새로 추가된 kakaotalk 오브젝트들을 확인할 수있음.
@@ -843,7 +882,7 @@ cluster name: admin11-eks, 새로 추가된 kakaotalk 오브젝트들을 확인�
 # 평가
 
 ## Saga (1)
-시나리오: Mission --> Reward --> Mission Update --> KakaoTalk 
+시나리오: Mission --> Reward --> Mission Update --> KakaoTalk --> Message Update 이벤트 --> Mission
 
 ![image](https://user-images.githubusercontent.com/24929411/93310353-a4d0d900-f83f-11ea-9f36-3a6e60ca4d50.png)
 
@@ -880,78 +919,54 @@ public class Mission {
 
    }
 ```
-MissionId와 RewardId를 통해 데이터베이스를 조회한다. 
+MissionId와 RewardId, KakaoTalkId를 통해 데이터베이스를 조회한다. 
 
 MypageRepository.java
 ```
-package game;
-
-import org.springframework.data.repository.CrudRepository;
-import org.springframework.data.repository.query.Param;
-
-import java.util.List;
-
 public interface MypageRepository extends CrudRepository<Mypage, Long> {
 
-   List<Mypage> findByMissionId(Long missionId);
-   List<Mypage> findByRewardId(Long rewardId);
+    List<Mypage> findByMissionId(Long missionId);
+    List<Mypage> findByRewardId(Long rewardId);
+    List<Mypage> findByKakaotalkId(Long kakaotalkId);
 
 }
 ```
-Mission, Reward 에서 데이터 변경이 발생하면 mypage에도 적용됨 (mypage MypageViewHandler.java)
+kakaoTalk 에서 데이터 변경이 발생하면 mypage에도 적용됨 (mypage MypageViewHandler.java)
 ```
 ...
-  @StreamListener(KafkaProcessor.INPUT)
-   public void whenAllocated_then_UPDATE_1(@Payload Allocated allocated) {
-       try {
-           if (allocated.isMe()) {
-               // view 객체 조회
-               List<Mypage> mypageList = mypageRepository.findByMissionId(allocated.getMissionId());
-               for(Mypage mypage : mypageList){
-                   // view 객체에 이벤트의 eventDirectValue 를 set 함
-                   mypage.setRewardId(allocated.getId());
-                   // view 레파지 토리에 save
-                   mypageRepository.save(mypage);
-               }
-           }
-       }catch (Exception e){
-           e.printStackTrace();
-       }
-   }
-   @StreamListener(KafkaProcessor.INPUT)
-   public void whenIssued_then_UPDATE_2(@Payload Issued issued) {
-       try {
-           if (issued.isMe()) {
-               // view 객체 조회
-               List<Mypage> mypageList = mypageRepository.findByRewardId(issued.getId());
-               for(Mypage mypage : mypageList){
-                   // view 객체에 이벤트의 eventDirectValue 를 set 함
-                   mypage.setRewardStatus(issued.getStatus());
-                   // view 레파지 토리에 save
-                   mypageRepository.save(mypage);
-               }
-           }
-       }catch (Exception e){
-           e.printStackTrace();
-       }
-   }
-   @StreamListener(KafkaProcessor.INPUT)
-   public void whenExchanged_then_UPDATE_3(@Payload Exchanged exchanged) {
-       try {
-           if (exchanged.isMe()) {
-               // view 객체 조회
-               List<Mypage> mypageList = mypageRepository.findByRewardId(exchanged.getId());
-               for(Mypage mypage : mypageList){
-                   // view 객체에 이벤트의 eventDirectValue 를 set 함
-                   mypage.setRewardStatus(exchanged.getStatus());
-                   // view 레파지 토리에 save
-                   mypageRepository.save(mypage);
-               }
-           }
-       }catch (Exception e){
-           e.printStackTrace();
-       }
-   }
+     @StreamListener(KafkaProcessor.INPUT)
+     public void whenMissionUpdated_then_CREATE_2 (@Payload MissionUpdated missionUpdated) {
+         try {
+             if (missionUpdated.isMe()) {
+                 // view 객체 생성
+                 Mypage mypage = new Mypage();
+                 // view 객체에 이벤트의 Value 를 set 함
+                 mypage.setKakaotalkId(missionUpdated.getId());
+                 // view 레파지 토리에 save
+                 mypageRepository.save(mypage);
+             }
+         }catch (Exception e){
+             e.printStackTrace();
+         }
+     }
+...
+    @StreamListener(KafkaProcessor.INPUT)
+    public void whenMissionUpdated_then_UPDATE_4(@Payload MissionUpdated missionUpdated) {
+        try {
+            if (missionUpdated.isMe()) {
+                // view 객체 조회
+                List<Mypage> mypageList = mypageRepository.findByKakaotalkId(missionUpdated.getId());
+                for(Mypage mypage : mypageList){
+                    // view 객체에 이벤트의 eventDirectValue 를 set 함
+                    mypage.setKakaotalkId(missionUpdated.getId());
+                    // view 레파지 토리에 save
+                    mypageRepository.save(mypage);
+                }
+            }
+        }catch (Exception e){
+            e.printStackTrace();
+        }
+    }
 ...
 ```
 ## Correlation (3) 
@@ -959,64 +974,34 @@ Mission, Reward 에서 데이터 변경이 발생하면 mypage에도 적용됨 (
 
 ## 동기식 호출 과 Fallback 처리 (4)
 
-분석단계에서의 조건 중 하나로 wallet -> gift 간의 호출은 동기식 일관성을 유지하는 트랜잭션으로 처리하기로 하였다. 호출 프로토콜은 이미 앞서 Rest Repository 에 의해 노출되어있는 REST 서비스를 FeignClient 를 이용하여 호출하도록 한다. 
+gift를 사용하면 kakaoTalk으로 Request/Response됨 
 
-- reward 서비스를 호출하기 위하여 Stub과 (FeignClient) 를 이용하여 Service 대행 인터페이스 (Proxy) 를 구현 
+- kakaoTalk 서비스를 호출하기 위하여 Stub과 (FeignClient) 를 이용하여 Service 대행 인터페이스 (Proxy) 를 구현 
 
+gift 시스템 KakaoTalkService.java
 ```
-# (wallet) giftService.java
-
-package game.external;
-
-import org.springframework.cloud.openfeign.FeignClient;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestMethod;
-
-import java.util.Date;
-
-@FeignClient(name="gift", url="${api.url.gift}", fallback = GiftServiceFallback.class)
-public interface GiftService {
-
-    @RequestMapping(method= RequestMethod.POST, path="/gifts")
-    public void exchange(@RequestBody Gift gift);
-
+@FeignClient(name="kakaoTalk", url="${api.url.kakaotalk}", fallback=KakaoTalkServiceFallback.class)
+public interface KakaoTalkService {
+    @RequestMapping(method= RequestMethod.GET, path="/kakaoTalks")
+    public void use(@RequestBody KakaoTalk kakaoTalk);
 }
 ```
 
-- update하기 전(@PreUpdate) gift 서비스에 요청하도록 처리 - (로직상에서 PATCH로 동작하기 때문에 PreUpdate를 사용했습니다.)
 ```
-# Wallet.java (Entity)
+# Gift.java (Entity)
 
-    @PreUpdate
-    public void onPreUpdate(){
-        game.external.Gift gift = new game.external.Gift();
-        gift.setWalletId(this.getId());
-        gift.setStatus("Exchanged.");
-        WalletApplication.applicationContext.getBean(game.external.GiftService.class)
-            .exchange(gift);
+    @PostPersist
+    public void onPostPersist(){
+
+        game.external.KakaoTalk kakaoTalk = new game.external.KakaoTalk();
+        // mappings goes here
+        kakaoTalk.setId(this.getId());
+        kakaoTalk.setStatus("send message!!!!");
+        GiftApplication.applicationContext.getBean(game.external.KakaoTalkService.class)
+                .use(kakaoTalk);
     }
 ```
 
-- 동기식 호출에서는 호출 시간에 따른 타임 커플링이 발생하며, gift 시스템이 장애가 나면 위 요청이 실패함:
-
-
-```
-# local test
-# gift 서비스를 잠시 내려놓음 (ctrl+c) 
-
-#Exchanged 처리 (PATCH)
-http localhost:8083/wallets/1 status=Exchanged  #Fail
-
-#gift 서비스 기동
-cd game-gift
-mvn spring-boot:run
-
-#Exchanged 처리 (PATCH)
-http localhost:8083/wallets/1 status=Exchanged    #Success
-```
-
-- 또한 과도한 요청시에 서비스 장애가 도미노 처럼 벌어질 수 있다. (서킷브레이커, 폴백 처리는 운영단계에서 설명한다.)
 
 ## Gateway (5)
 * Gateway 프레임워크 선택: Istio
@@ -1043,20 +1028,22 @@ AWS Console Code Build 화면 (여러 Component들 중 일부만 캡처 했습�
 
 * 서킷 브레이킹 프레임워크의 선택: Istio
 
-시나리오는 wallet-->gift 시의 연결을 RESTful Request/Response 로 연동하여 구현이 되어있고, 결제 요청이 과도할 경우 CB 를 통하여 장애격리.
+시나리오는 gift-->kakaoTalk 시의 연결을 RESTful Request/Response 로 연동하여 구현이 되어있고, 결제 요청이 과도할 경우 CB 를 통하여 장애격리.
 
 - Istio DestinationRule 설정: Queue에서 Connection pool 에 연결을 기다리는 request수가 1이 넘어가면 CB 회로가 닫히도록 (요청을 빠르게 실패처리, 차단) 설정
-![image](https://user-images.githubusercontent.com/24929411/93157393-16782c80-f745-11ea-8c75-b92c8e9315a3.png)
+![image](https://user-images.githubusercontent.com/24929411/93413644-ad2a2200-f8da-11ea-93ee-39d545393e75.png)
+
 
 * 부하테스터 siege 툴을 통한 서킷 브레이커 동작 확인:
 
 (gift 서비스에 GET 요청을 하여 테스트)
 
 동시 사용자 1, 3초 동안 --> 모두 성공
-![image](https://user-images.githubusercontent.com/24929411/93169459-19cce180-f760-11ea-9f6e-65b23b9cd5b9.png)
+![image](https://user-images.githubusercontent.com/24929411/93413884-2f1a4b00-f8db-11ea-914d-bd2c813145a4.png)
+
 
 동시 사용자 2, 3초동안 --> 일부 실패 (동시 요청 수가 1이 넘어가면서 CB가 작동되었음을 알 수 있음)
-![image](https://user-images.githubusercontent.com/24929411/93169647-77f9c480-f760-11ea-95fd-f24b51751649.png)
+![image](https://user-images.githubusercontent.com/24929411/93414031-76a0d700-f8db-11ea-9f96-fce6f210b069.png)
 
 
 
